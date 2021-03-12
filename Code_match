@@ -1,0 +1,91 @@
+library(tidyverse)
+library(janitor)
+library(naniar)
+library(MatchIt)
+library(gtsummary)
+library(sjPlot)
+
+##Load
+monica <- read.csv('monica.csv', sep = ';', dec = ',', stringsAsFactors = FALSE,
+                   na.strings = c('','n/a','NA','N/A'))
+monica <- monica %>% clean_names()
+monica %>% str()
+monica$group <- ifelse(monica$group == 1, 0, 1)
+
+monica <- monica %>% 
+  mutate(
+    race = ifelse(race == 1, 1, 2),
+    race_donor = ifelse(race_donor == 1, 1, 2)
+  )
+
+##mismap
+vis_miss(monica)
+
+##Replace missing to 999
+monica[is.na(monica)] <- 999
+
+##MatchIt
+m.out <- matchit(group ~ age +  male + race + pra_i + pra_ii + dgf + tif_h + 
+                   mm_sum + age_donor + kdpi, data = monica,
+                 method = "nearest", discart = 'both', caliper = 0.1)
+
+
+m.out2 <-  matchit(group ~ age +  male + race + pra_i + pra_ii + dgf + tif_h +
+                     mm_sum + age_donor + kdpi, data = monica,
+                   method = "full", distance = "glm", link = "probit", discard = 'both')
+
+## Método de escolha
+m.out3 <-  matchit(group ~ age +  male + race + pra_i + pra_ii +  tif_h + dgf +
+                     mm_sum +  age_donor + kdpi, data = monica, 
+                   method = "subclass", subclass = 3)
+
+
+summary(m.out)
+plot(summary(m.out))
+plot(m.out, type="hist")
+
+plot(summary(m.out3, subclass = TRUE))
+m.data <- match.data(m.out)
+
+
+
+## Factors
+m.data[m.data == 999] <- NA
+
+m.data <- m.data %>% 
+  mutate(
+    group = factor(group, labels = c('Ag_CMV', 'PCR_CMV')),
+    race = factor(race, labels = c('white','non-white')),
+    race_donor = factor(race_donor, labels = c('white','non-white')),
+    ckd = factor(ckd, labels = c('diabetes','glomerulopheritis','indeterminate','other')),
+    type_trs = factor(type_trs, labels = c('hemodialysis','peritoneal','preemptive','others')),
+    r_d_cmv = factor(r_d_cmv, labels = c('Dpos_Rpos', 'Rpos_Dneg','Rneg_Dneg'))
+  )
+
+m.data <- m.data %>% 
+  mutate_at(vars(male, dgf, 
+                 retransplant, cmv, infection, disease,
+                 mps, acr, acr_pre_cmv) , ~ factor(. , labels = c('no','yes')))
+
+## write CSV
+write.csv('m.data', file = 'monica_after_match.csv', quote = FALSE, row.names = FALSE)
+
+## Summary
+m.data %>% 
+  select(age, male, race, r_cmv_pos, pra_i, pra_ii, ckd, mm_sum, dgf, tif_h, age_donor, sex_donor, 
+         race_donor, kdpi, d_cmv_pos, r_d_cmv, mps, retransplant, group, cmv, infection,
+         disease, acr, acr_pre_cmv, e_gfr_12m) %>% 
+  tbl_summary(by = group,
+              type = c(pra_ii, mm_sum) ~ 'continuous' ) %>% 
+  add_p() %>% 
+  add_q() %>% 
+  add_overall()
+
+
+## models
+model_cmv <- glm(cmv ~ group, data = m.data, family = 'binomial')
+model_infection <- glm(infection ~ group, data = m.data, family = 'binomial')
+model_disease <- glm(disease ~ group, data = m.data, family = 'binomial')
+model_acr <- glm(acr ~ group, data = m.data, family = 'binomial')
+
+tab_model(model_cmv)
