@@ -1,0 +1,480 @@
+---
+title: "convalescent_plasma"
+output: word_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+library(tidyverse)
+library(finalfit)
+library(MatchIt)
+library(gtsummary)
+library(cobalt)
+library(lubridate)
+library(cowplot)
+library(survival)
+library(survminer)
+library(knitr)
+library(cowplot)
+
+## Load Data
+covid <- read.csv('covid2.csv', sep = ';', dec = ',', na.strings = c('', ' ', 'NA'),
+                  stringsAsFactors = FALSE)
+covid %>% str()
+
+bin_vars <- c('convalescent_plasma', 'has', 'diabetes', 'auto_immune_disease',
+              'heart_disease', 'pneumopathy', 'liver_disease', 'Past_or_current_neoplasm',
+              'hospital_admission', 'mechanical_ventilation', 'death')
+
+covid$patient_name <- NULL
+covid <- covid %>% 
+  mutate_at(vars(contains('date_')), ~ as.Date(. , format = '%d/%m/%Y')) %>% 
+  mutate_at(bin_vars, ~ factor(. , labels = c('no','yes'))) %>% 
+  mutate(
+    BMI = weight / (height^2),
+    time_to_symptoms = as.numeric(date_COVID_diagnosis - date_symptom_onset)
+  ) %>% 
+  relocate(BMI, .after = height) %>% 
+  relocate(time_to_symptoms, .after = time_transplant) 
+
+covid$time_to_symptoms[covid$time_to_symptoms < 0] <- NA
+
+covid_2021 <- covid %>% 
+  filter(date_COVID_diagnosis > '2020-12-31')
+
+```
+
+
+
+```{r}
+covid %>% 
+  ggplot(aes(date_COVID_diagnosis, fill = convalescent_plasma))+
+  geom_histogram(alpha = 0.75)+
+  scale_x_date(date_breaks = '2 month', date_labels = '%b %Y',
+               limits = c(as.Date('2020-03-20'), as.Date('2021-03-30')))+
+  theme_bw()+
+  labs(x = '', y = 'Kidney Transplant COVID-19', fill = 'Treated with Convalescent Plasma')+
+  theme(legend.position = 'bottom'  )-> p01
+
+p01
+
+ggsave(p01, filename = 'Figure01.tiff', dpi = 300, compression = 'lzw')
+```
+
+
+## Methods
+
+O numero total de casos analisados foi de: ```r nrow(covid)```
+Separamos os casos apenas do ano de 2021: ```r nrow(covid_2021)```
+
+```{r}
+covid_2021 <- covid_2021 %>% 
+  filter(!donor_type %in% c('pancreas_after_kidney','simultaneos_pancreas_kidney')) 
+```
+
+Retiramos transplante combinados:```r nrow(covid_2021)```
+
+Acho mais adequado usar os casos de 2021. Maior agressividade?
+
+
+# Temporal Use Convaslecent Plasma
+```{r}
+##Plot
+theme_set(theme_bw())
+
+# Tempora use Convalescent Plasm
+covid %>% 
+  filter(date_COVID_diagnosis > '2020-12-31') %>% 
+  group_by(date_COVID_diagnosis) %>% 
+  count(convalescent_plasma) %>% 
+  ggplot(aes(date_COVID_diagnosis, n, color = convalescent_plasma))+
+  geom_point(alpha = 0.75)+
+  geom_line(alpha = 0.75)+
+  labs(x = 'Date COVID diagnosis', y = 'Incident Cases', color = 'Convaslescent Plasma')
+
+
+```
+
+
+```{r}
+covid %>% 
+  filter(date_COVID_diagnosis > '2020-12-31') %>% 
+  mutate(week = week(date_COVID_diagnosis)) %>% 
+  group_by(week) %>% 
+  count(convalescent_plasma) %>% 
+  ggplot(aes(week, n, color = convalescent_plasma))+
+  geom_point(alpha = 0.75)+
+  geom_line(alpha = 0.75)+
+  labs(x = 'Week Starting 2021', y = 'Incident Cases', color = 'Convaslescent Plasma')+
+  scale_x_continuous( breaks = seq(0, 13, by = 1))
+```
+
+
+```{r}
+covid %>% 
+  filter(date_COVID_diagnosis > '2020-12-31') %>% 
+  mutate(week = week(date_COVID_diagnosis)) %>% 
+  group_by(week) %>% 
+  count(convalescent_plasma) %>% 
+  ggplot(aes(week, n, color = convalescent_plasma))+
+  geom_point(alpha = 0.75)+
+  geom_line()+
+  geom_label(aes(label = n))+
+  labs(x = 'Week Starting 2021', y = 'Incident Cases', color = 'Convaslescent Plasma')+
+  scale_x_continuous( breaks = seq(0, 13, by = 1))+
+  theme_bw() -> p02
+
+p02
+```
+
+
+# Statistics
+
+
+Missing Data: Avaliamos as taxas de dados faltosos na maioria foi inferior a 10%. Apenas o tabagismo apresentou 21.3% e os dados de HLA apresentaram valores de missing ate 20%.
+
+**Univariate Comparations:**
+Continuos Data was present was median and percentile 25 and 75% and compared with Mann-Whitney test. Categorical data was present was n and percentage and compared with chi-square test
+
+
+**Propensity score**
+We used propensity score matching to estimate the effect of the treatment with convalescent plasma on  COVID-19 transplant patients accounting for confounding by the included covariates. We included in match the variables associated with COVID prognosis by previos reports: age,  BMI,  donor type, time transplant (months) and time_to_symptoms (days), and comorbites (has and diabetes), and eGFR.
+                  
+
+We used optimal matching on the propensity score, which yielded adequate balance (Figure XX). The propensity score was estimated using a logistic regression of the treatment on the covariates, which yielded better balance than did a logistic regression. After matching, all standardized mean differences for the covariates were below 0.1 indicating adequate balance. 
+
+To estimate the treatment effect and its standard error, we fit a cox model including the  matching weights in the estimation. The coefficient on the treatment (HR) was taken to be the estimate of the treatment effect. We checked the proporsionality hazard with schoenfeld residuals.
+
+We used R version 4.0.2 and the package matchIt for matching
+
+Ho, D. E., Imai, K., King, G., & Stuart, E. A. (2011). MatchIt: Nonparametric Preprocessing for Parametric Causal Inference. Journal of Statistical Software, 42(8). doi:10.18637/jss.v042.i08
+
+Hansen, B. B., & Klopfer, S. O. (2006). Optimal Full Matching and Related Designs via Network Flows. Journal of Computational and Graphical Statistics, 15(3), 609–627. doi: 10.1198/106186006X137047
+
+
+
+# Tabela de dados faltosos totais (colocar anexo)
+
+```{r, }
+covid %>% 
+  filter(date_COVID_diagnosis > '2020-12-31') %>% 
+  missing_glimpse() -> mis1
+
+knitr::kable(mis1, row.names=FALSE, align=c("l", "l", "r", "r", "r", "r", "r"))
+```
+
+# Matchit
+
+```{r}
+##Replace missing data
+covid_match <- covid %>% 
+  filter(date_COVID_diagnosis > '2020-12-31') %>% # diagnosis more than 2020
+  filter(!donor_type %in% c('pancreas_after_kidney','simultaneos_pancreas_kidney')) # remove simultaneos tx
+
+
+covid_match <- covid_match %>% 
+  mutate(
+    time_death2 = as.numeric(as.Date('2021-04-30') - date_COVID_diagnosis)
+  ) %>% 
+  mutate(
+    time_death = ifelse(is.na(time_death), time_death2, time_death)
+  )
+
+covid_match <- covid_match %>% 
+  mutate(
+    death = case_when(
+      time_death > 30 & death == 'no' ~ 'no',
+      time_death > 30 & death == 'yes' ~ 'no',
+      time_death <= 30 & death == 'no' ~ 'no',
+      time_death <= 30 & death == 'yes' ~ 'yes'
+    )
+  ) 
+
+covid_match$time_death <- ifelse(covid_match$time_death >=30, 30, covid_match$time_death)
+
+##Remove missing
+
+##Impute missing To match
+covid_match$BMI[is.na(covid_match$BMI)] <- 26.55
+covid_match$donor_type[is.na(covid_match$donor_type)] <- 'unknown'
+covid_match$time_transplant[is.na(covid_match$time_transplant)] <- 81.55
+covid_match$time_to_symptoms[is.na(covid_match$time_to_symptoms)] <- 5.55 
+covid_match$eGFR_baseline[is.na(covid_match$eGFR_baseline)] <- 48.888
+
+##category BMI
+covid_match <- covid_match %>% 
+  mutate(BMI_cat = ifelse(BMI > 30, 'higher_30', 'lower_30')) %>% 
+  relocate(BMI_cat, .after = BMI) 
+
+##MatchIt
+m.out2 <- matchit(convalescent_plasma ~ age +   BMI_cat + donor_type + time_transplant + time_to_symptoms +
+                   has + diabetes + eGFR_baseline, data = covid_match,
+                 method = "optimal", distance = "glm", link = "probit", discard = 'control', ratio = 2)
+
+
+```
+
+
+
+# Plot Balance (supplementary)
+
+```{r}
+plot(m.out2, type="hist")
+```
+# Plot Ballance (supplementary)
+
+```{r, }
+plot(summary(m.out2))
+```
+Donor typo 99 = missing
+
+# Balance Measures
+
+```{r}
+bal.tab(m.out2) -> bal1
+kable(bal1$Balance)
+```
+
+# Match Group
+
+```{r}
+kable(bal1$Observations)
+```
+
+
+# Tabela apos o pareamento
+
+```{r}
+## Obtain Data Match
+m.data <- match.data(m.out2)
+m.data$donor_type[m.data$donor_type == 'unknown'] <- NA
+m.data$time_transplant[m.data$time_transplant == 81.55] <- NA
+m.data$time_to_symptoms[m.data$time_to_symptoms == 5.55] <- NA
+m.data$eGFR_baseline[m.data$eGFR_baseline == 48.888] <- NA
+
+theme_gtsummary_journal(journal = c('jama'))
+
+m.data %>% 
+  select(convalescent_plasma:death) %>% 
+  select(-contains('HLA_'), -time_hospitalization, -weight, -height, -BMI,
+         -contains('date')) %>% 
+  select(-hospital_admission, -need_use_suplementary_oxigen, -mechanical_ventilation,
+         -time_death, -death) %>% 
+  tbl_summary(by = convalescent_plasma) %>% 
+  add_p(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>% 
+  bold_labels() %>% 
+  as_kable()
+
+
+
+```
+
+
+
+```{r}
+m.data %>% 
+  select(convalescent_plasma, hospital_admission, need_use_suplementary_oxigen, mechanical_ventilation, death) %>% 
+  tbl_summary(by = convalescent_plasma) %>% 
+  add_difference(pvalue_fun = ~style_pvalue(.x, digits = 3)) %>% 
+  as_kable()
+```
+
+# HR Death
+
+```{r}
+## HR
+m.data$death <- ifelse(m.data$death == 'no',0,1)
+cox1 <- coxph(Surv(time_death, death) ~ convalescent_plasma, data = m.data,
+              weights = weights)
+
+tbl_regression(cox1, exponentiate = TRUE) %>% 
+  as_kable()
+```
+
+
+# residual Schoenfield
+
+```{r}
+cox.zph(cox1)
+```
+
+```{r}
+
+fit1 <- survfit(Surv(time_death, death) ~ convalescent_plasma, data = m.data)
+ggsurvplot(fit1, data = m.data, pval = TRUE, risk.table = TRUE, fontsize = 3,
+           tables.theme = clean_theme()) -> p1
+
+
+p1$table <- p1$table+
+  theme(plot.title = element_text(size = 10))
+
+
+plot_grid(p1$plot, p1$table, ncol = 1, rel_heights = c(2,1)) -> fig03
+fig03
+
+ggsave(fig03, filename = 'Figure03.tiff', dpi = 300, compression = 'lzw')
+
+
+
+```
+
+```{r}
+summary(fit1)
+```
+
+
+# By time to symptoms all groups
+
+
+```{r}
+m.data <- m.data %>% 
+  mutate(symptoms_cat = case_when(
+    time_to_symptoms <= 2 ~ 'unti_2dys',
+    time_to_symptoms > 2 & time_to_symptoms <= 4 ~ 'between_3_4_dys',
+    time_to_symptoms > 4 ~ 'more_than_4dys'
+  ))
+
+fit2 <- survfit(Surv(time_death, death) ~ symptoms_cat, data = m.data)
+ggsurvplot(fit2, data = m.data, pval = TRUE) 
+```
+
+
+
+```{r}
+summary(fit1)
+
+```
+
+
+# By time to symptos only plasma
+
+
+```{r}
+m.data <- m.data %>% 
+  mutate(symptoms_cat = case_when(
+    time_to_symptoms <= 2 ~ 'unti_2dys',
+    time_to_symptoms > 2 & time_to_symptoms <= 4 ~ 'between_3_4_dys',
+    time_to_symptoms > 4 ~ 'more_than_4dys'
+  ))
+
+fit2 <- survfit(Surv(time_death, death) ~ symptoms_cat, data = m.data %>% filter(convalescent_plasma == 'yes'))
+ggsurvplot(fit2, data = m.data, pval = TRUE)
+```
+
+# time symptos and plasma infusion
+
+```{r}
+m.data %>% 
+  filter(convalescent_plasma == 'yes') %>% 
+  select(time_between_symptoms_and_plasma_infusion) %>% 
+  summary()
+
+
+```
+# by infusion < 6 dys only convalescent plasma
+
+```{r}
+m.data <- m.data %>% 
+  mutate(
+    infusion = ifelse(time_between_symptoms_and_plasma_infusion < 6, 'less_6dys', 'more_6dys')
+  )
+
+fit3 <- survfit(Surv(time_death, death) ~ infusion, data = m.data %>% filter(convalescent_plasma == 'yes'))
+ggsurvplot(fit3, data = m.data, pval = TRUE) 
+
+
+
+```
+
+
+```{r}
+summary(fit3)
+```
+
+#Ambulatorio
+
+```{r}
+
+
+fit3 <- survfit(Surv(time_death, death) ~ plasma_ambulatorial_hospital, data = m.data %>% filter(convalescent_plasma == 'yes'))
+ggsurvplot(fit3, data = m.data, pval = TRUE) 
+
+
+```
+
+
+# Ambulatorial
+
+```{r}
+m.data %>% 
+  filter(convalescent_plasma == 'yes') %>% 
+  count(plasma_ambulatorial_hospital) %>% 
+  mutate(prop = n / sum(n))
+```
+
+```{r}
+m.data %>% 
+  filter(convalescent_plasma == 'yes') %>% 
+  select(antibody_title) %>% 
+  mutate(antibody_title = log10(antibody_title)) %>% 
+  summary()
+
+
+
+m.data %>% 
+  filter(convalescent_plasma == 'yes') %>% 
+  mutate(death = factor(death, labels = c('no','yes'))) %>% 
+  ggplot(aes(log10(antibody_title), fill = death))+
+  geom_density(alpha = 0.75)+
+  scale_fill_manual(values = c('blue','red'))+
+  scale_x_continuous(breaks = c(seq(0, 2.5, by = 0.25)))+
+  geom_vline(xintercept = 0.87)+
+  theme_bw()
+
+
+
+
+```
+
+```{r}
+m.data_plasma <- m.data %>% 
+  filter(convalescent_plasma == 'yes')
+
+
+fitx <- survfit(Surv(time_death, death) ~ ifelse(log10(antibody_title) <= 0.87, 'low', 'hight'), data = m.data_plasma)
+ggsurvplot(fitx, data = m.data_plasma, pval = TRUE)
+```
+
+```{r}
+m.data_plasma <- m.data %>% 
+  filter(convalescent_plasma == 'yes')
+
+
+m.data_plasma %>% 
+  filter(!is.na(antibody_title)) %>% 
+  mutate(log_antibody_title = log10(antibody_title)) %>% 
+  mutate(death = factor(death, labels = c('no','yes'))) %>% 
+  ggplot(aes(x = death, y = log_antibody_title, color = death))+
+  geom_point(size = 2, alpha = 0.75)+
+  stat_summary(fun.y = median, fun.ymin = median, fun.ymax = median,
+                 geom = "crossbar", width = 0.5)+
+  theme_bw()+
+  scale_color_manual(values = c('blue','red'))+
+  theme(legend.position = 'none')+
+  labs(x = 'COVID-19 mortality', y = 'Log10 Antibody title') -> p10
+
+p10
+
+ggsave(p10, filename = 'Figure05.tiff', dpi = 300, compression = 'lzw')
+
+
+m.data_plasma %>% 
+  filter(!is.na(antibody_title)) %>% 
+  mutate(log_antibody_title = log10(antibody_title)) %>% 
+  mutate(death = factor(death, labels = c('no','yes'))) %>% 
+  select(death, antibody_title, log_antibody_title) %>% 
+  tbl_summary(by = death) %>% 
+  add_p()
+  
+```
+
